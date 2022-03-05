@@ -64,6 +64,19 @@ class Collection extends BaseCollection implements QueueableCollection
     }
 
     /**
+     * Load a set of relationship counts onto the collection as exactly stated in the relation definition.
+     *
+     * @param  array|string  $relations
+     * @return $this
+     */
+    public function loadCountAsStated($relations)
+    {
+        $relations = is_array($relations) ? $relations : func_get_args();
+
+        return $this->loadCountHandler($relations, true);
+    }
+
+    /**
      * Load a set of relationship counts onto the collection.
      *
      * @param  array|string  $relations
@@ -71,14 +84,30 @@ class Collection extends BaseCollection implements QueueableCollection
      */
     public function loadCount($relations)
     {
+        $relations = is_array($relations) ? $relations : func_get_args();
+
+        return $this->loadCountHandler($relations);
+    }
+
+    /**
+     * Common handler script for loading the count values for relations.
+     *
+     * @param  bool  $preserveRelationState
+     * @param  array|string  $relations
+     * @return $this
+     */
+    public function loadCountHandler($relations, bool $preserveRelationState = false)
+    {
         if ($this->isEmpty()) {
             return $this;
         }
 
+        $method = $preserveRelationState ? 'withCountAsStated' : 'withCount';
+
         $models = $this->first()->newModelQuery()
             ->whereKey($this->modelKeys())
             ->select($this->first()->getKeyName())
-            ->withCount(...func_get_args())
+            ->{$method}($relations)
             ->get();
 
         $attributes = Arr::except(
