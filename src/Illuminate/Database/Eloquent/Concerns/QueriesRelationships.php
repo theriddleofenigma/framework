@@ -8,6 +8,7 @@ use Illuminate\Database\Eloquent\Relations\MorphTo;
 use Illuminate\Database\Eloquent\Relations\Relation;
 use Illuminate\Database\Query\Builder as QueryBuilder;
 use Illuminate\Database\Query\Expression;
+use Illuminate\Support\Facades\DB;
 use Illuminate\Support\Str;
 use RuntimeException;
 
@@ -355,15 +356,40 @@ trait QueriesRelationships
      */
     public function withCount($relations)
     {
+        $relations = is_array($relations) ? $relations : func_get_args();
+
+        return $this->withCountHandler($relations);
+    }
+
+    /**
+     * Add subselect queries to count the relations as exactly stated in the relation definition.
+     *
+     * @param  mixed  $relations
+     * @return $this
+     */
+    public function withCountAsStated($relations)
+    {
+        $relations = is_array($relations) ? $relations : func_get_args();
+
+        return $this->withCountHandler($relations, true);
+    }
+
+    /**
+     * Common handler script for loading the count values for relations.
+     *
+     * @param mixed $relations
+     * @param bool $preserveRelationState
+     * @return $this
+     */
+    protected function withCountHandler(mixed $relations, bool $preserveRelationState = false)
+    {
         if (empty($relations)) {
             return $this;
         }
 
         if (is_null($this->query->columns)) {
-            $this->query->select([$this->query->from.'.*']);
+            $this->query->select([$this->query->from . '.*']);
         }
-
-        $relations = is_array($relations) ? $relations : func_get_args();
 
         foreach ($this->parseWithRelations($relations) as $name => $constraints) {
             // First we will determine if the name has been aliased using an "as" clause on the name
@@ -382,13 +408,22 @@ trait QueriesRelationships
             // Here we will get the relationship count query and prepare to add it to the main query
             // as a sub-select. First, we'll get the "has" query and use that to get the relation
             // count query. We will normalize the relation name then append _count as the name.
-            $query = $relation->getRelationExistenceCountQuery(
-                $relation->getRelated()->newQuery(), $this
-            );
+            if ($preserveRelationState) {
+                $query = $relation->getQuery()->whereColumn(
+                    $relation->getQualifiedParentKeyName(), '=', $relation->getExistenceCompareKey()
+                );
+            } else {
+                $query = $relation->getRelationExistenceCountQuery(
+                    $relation->getRelated()->newQuery(), $this
+                );
+            }
 
             $query->callScope($constraints);
-
-            $query = $query->mergeConstraintsFrom($relation->getQuery())->toBase();
+            if (!$preserveRelationState) {
+                $query = $query->mergeConstraintsFrom($relation->getQuery())->toBase();
+            } else {
+                $query = DB::query()->from($query, $name . '_aggregate')->select(new Expression('count(*)'));
+            }
 
             if (count($query->columns) > 1) {
                 $query->columns = [$query->columns[0]];
@@ -399,7 +434,7 @@ trait QueriesRelationships
             // Finally we will add the proper result column alias to the query and run the subselect
             // statement against the query builder. Then we will return the builder instance back
             // to the developer for further constraint chaining that needs to take place on it.
-            $column = $alias ?? Str::snake($name.'_count');
+            $column = $alias ?? Str::snake($name . '_count');
 
             $this->selectSub($query, $column);
         }
